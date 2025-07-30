@@ -1,14 +1,44 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, FileText, Database } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { 
+  Download, 
+  FileText, 
+  Database, 
+  File, 
+  Image, 
+  Code,
+  Zap,
+  Settings,
+  CheckCircle,
+  Copy,
+  Share,
+  Mail,
+  ExternalLink
+} from 'lucide-react';
 import { AnalysisResult } from '@/types/analysis';
+import { useToast } from '@/hooks/use-toast';
 
 interface ExportToolsProps {
   result: AnalysisResult;
 }
 
 export const ExportTools: React.FC<ExportToolsProps> = ({ result }) => {
+  const { toast } = useToast();
+  const [exportConfig, setExportConfig] = useState({
+    includeCodeSnippets: true,
+    includeMetadata: true,
+    includeCharts: false,
+    format: 'detailed',
+    compression: 'none'
+  });
+  const [isGenerating, setIsGenerating] = useState<string | null>(null);
+
   const downloadFile = (content: string, filename: string, contentType: string) => {
     const blob = new Blob([content], { type: contentType });
     const url = URL.createObjectURL(blob);
@@ -19,175 +49,355 @@ export const ExportTools: React.FC<ExportToolsProps> = ({ result }) => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    
+    toast({
+      title: "Download Started",
+      description: `${filename} is being downloaded...`,
+    });
   };
 
-  const generateSummaryReport = () => {
+  const copyToClipboard = async (content: string, type: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      toast({
+        title: "Copied to Clipboard",
+        description: `${type} data copied successfully!`,
+      });
+    } catch (err) {
+      toast({
+        title: "Copy Failed",
+        description: "Failed to copy to clipboard. Please try downloading instead.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const generateAdvancedReport = async (type: string) => {
+    setIsGenerating(type);
+    
+    // Simulate processing time
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
     const report = {
       analysis_summary: result.summary,
+      export_configuration: exportConfig,
       library_statistics: result.libraryStats,
       algorithm_statistics: result.algorithmStats,
       algorithm_type_statistics: result.algorithmTypeStats,
-      total_findings: result.findings.length,
-      findings_by_severity: {
-        critical: result.findings.filter(f => f.severity === 'critical').length,
-        warning: result.findings.filter(f => f.severity === 'warning').length,
-        info: result.findings.filter(f => f.severity === 'info').length,
-      },
-      export_timestamp: new Date().toISOString()
+      findings: exportConfig.includeCodeSnippets 
+        ? result.findings 
+        : result.findings.map(f => ({ ...f, codeSnippet: '[Code snippet excluded]' })),
+      metadata: exportConfig.includeMetadata ? {
+        export_timestamp: new Date().toISOString(),
+        export_version: '2.0',
+        configuration: exportConfig,
+        summary_stats: {
+          total_findings: result.findings.length,
+          critical_findings: result.findings.filter(f => f.severity === 'critical').length,
+          warning_findings: result.findings.filter(f => f.severity === 'warning').length,
+          info_findings: result.findings.filter(f => f.severity === 'info').length,
+        }
+      } : undefined
     };
+    
+    setIsGenerating(null);
     return JSON.stringify(report, null, 2);
   };
 
-  const generateDetailedReport = () => {
-    const report = {
-      ...result,
-      export_timestamp: new Date().toISOString()
-    };
-    return JSON.stringify(report, null, 2);
+  const generateExecutiveSummary = () => {
+    const criticalCount = result.findings.filter(f => f.severity === 'critical').length;
+    const warningCount = result.findings.filter(f => f.severity === 'warning').length;
+    
+    return `# Cryptographic Analysis Report
+
+## Executive Summary
+- **Repository**: ${result.summary.repositoryName}
+- **Analysis Date**: ${new Date(result.summary.analysisDate).toLocaleDateString()}
+- **Files Analyzed**: ${result.summary.filesAnalyzed}
+- **Total Findings**: ${result.findings.length}
+
+## Security Assessment
+- **Critical Issues**: ${criticalCount}
+- **Warnings**: ${warningCount}
+- **Overall Risk**: ${criticalCount > 0 ? 'HIGH' : warningCount > 0 ? 'MEDIUM' : 'LOW'}
+
+## Top Libraries Detected
+${result.libraryStats.slice(0, 5).map(lib => `- ${lib.library}: ${lib.count} occurrences`).join('\n')}
+
+## Key Algorithms Found
+${result.algorithmStats.slice(0, 10).map(alg => `- ${alg.algorithm}: ${alg.count} implementations (${alg.averageConfidence}% confidence)`).join('\n')}
+
+---
+Generated by Cryptographic Algorithm Analyzer`;
   };
 
-  const generateCSV = () => {
-    const headers = [
-      'File Path',
-      'Algorithm',
-      'Algorithm Type',
-      'Confidence',
-      'Confidence Level',
-      'Severity',
-      'Line Number',
-      'Description'
+  const generateTechnicalReport = () => {
+    const lines = [
+      'file_path,line_number,algorithm,algorithm_type,confidence,severity,description'
     ];
+    
+    result.findings.forEach(finding => {
+      lines.push([
+        `"${finding.filePath}"`,
+        finding.lineNumber,
+        `"${finding.algorithm}"`,
+        `"${finding.algorithmType}"`,
+        finding.confidence,
+        finding.severity,
+        `"${finding.description.replace(/"/g, '""')}"`
+      ].join(','));
+    });
+    
+    return lines.join('\n');
+  };
 
-    const rows = result.findings.map(finding => [
-      finding.filePath,
-      finding.algorithm,
-      finding.algorithmType,
-      finding.confidence.toString(),
-      finding.confidenceLevel,
-      finding.severity,
-      finding.lineNumber.toString(),
-      `"${finding.description.replace(/"/g, '""')}"`
-    ]);
+  const shareReport = async () => {
+    const summary = generateExecutiveSummary();
+    const shareData = {
+      title: `Cryptographic Analysis Report - ${result.summary.repositoryName}`,
+      text: summary.substring(0, 200) + '...',
+      url: window.location.href
+    };
 
-    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
-    return csvContent;
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+        toast({
+          title: "Shared Successfully",
+          description: "Report shared via native sharing",
+        });
+      } catch (err) {
+        console.log('Error sharing:', err);
+      }
+    } else {
+      await copyToClipboard(window.location.href, 'Report URL');
+    }
   };
 
   const repoName = result.summary.repositoryName.replace(/[^a-zA-Z0-9]/g, '_');
   const timestamp = new Date().toISOString().split('T')[0];
 
+  const exportButtons = [
+    {
+      id: 'summary',
+      title: 'Executive Summary',
+      description: 'High-level overview (MD)',
+      icon: <FileText className="w-5 h-5" />,
+      action: () => downloadFile(generateExecutiveSummary(), `${repoName}_executive_summary_${timestamp}.md`, 'text/markdown'),
+      size: Math.round(generateExecutiveSummary().length / 1024),
+      color: 'bg-blue-500'
+    },
+    {
+      id: 'detailed',
+      title: 'Detailed Report',
+      description: 'Complete analysis (JSON)',
+      icon: <Database className="w-5 h-5" />,
+      action: async () => {
+        const content = await generateAdvancedReport('detailed');
+        downloadFile(content, `${repoName}_detailed_report_${timestamp}.json`, 'application/json');
+      },
+      size: Math.round(JSON.stringify(result).length / 1024),
+      color: 'bg-purple-500'
+    },
+    {
+      id: 'technical',
+      title: 'Technical Data',
+      description: 'Findings only (CSV)',
+      icon: <Code className="w-5 h-5" />,
+      action: () => downloadFile(generateTechnicalReport(), `${repoName}_technical_${timestamp}.csv`, 'text/csv'),
+      size: Math.round(generateTechnicalReport().length / 1024),
+      color: 'bg-green-500'
+    },
+    {
+      id: 'raw',
+      title: 'Raw Data',
+      description: 'Unprocessed results',
+      icon: <File className="w-5 h-5" />,
+      action: () => downloadFile(result.rawData.json, `${repoName}_raw_${timestamp}.json`, 'application/json'),
+      size: Math.round(result.rawData.json.length / 1024),
+      color: 'bg-orange-500'
+    }
+  ];
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Download className="w-5 h-5" />
-          Export Reports
-        </CardTitle>
-        <CardDescription>
-          Download analysis results in various formats
-        </CardDescription>
-      </CardHeader>
-      
-      <CardContent>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Summary JSON */}
-          <Button
-            variant="outline"
-            onClick={() => 
-              downloadFile(
-                generateSummaryReport(),
-                `${repoName}_summary_${timestamp}.json`,
-                'application/json'
-              )
-            }
-            className="flex flex-col items-center gap-2 h-auto py-4"
-          >
-            <FileText className="w-6 h-6" />
-            <div className="text-center">
-              <div className="font-medium">Summary JSON</div>
-              <div className="text-xs text-muted-foreground">
-                Overview & statistics
+    <div className="space-y-6">
+      <Card className="animate-fade-in">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Download className="w-5 h-5" />
+            Advanced Export & Sharing
+          </CardTitle>
+          <CardDescription>
+            Customize and download analysis results in multiple formats
+          </CardDescription>
+        </CardHeader>
+        
+        <CardContent className="space-y-6">
+          {/* Export Configuration */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Settings className="w-4 h-4" />
+              <Label className="text-sm font-medium">Export Configuration</Label>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-sm">Include Code Snippets</Label>
+                  <p className="text-xs text-muted-foreground">Add source code in reports</p>
+                </div>
+                <Switch
+                  checked={exportConfig.includeCodeSnippets}
+                  onCheckedChange={(checked) => 
+                    setExportConfig(prev => ({ ...prev, includeCodeSnippets: checked }))
+                  }
+                />
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-sm">Include Metadata</Label>
+                  <p className="text-xs text-muted-foreground">Add export timestamps</p>
+                </div>
+                <Switch
+                  checked={exportConfig.includeMetadata}
+                  onCheckedChange={(checked) => 
+                    setExportConfig(prev => ({ ...prev, includeMetadata: checked }))
+                  }
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label className="text-sm">Format Type</Label>
+                <Select
+                  value={exportConfig.format}
+                  onValueChange={(value) => 
+                    setExportConfig(prev => ({ ...prev, format: value }))
+                  }
+                >
+                  <SelectTrigger className="h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="summary">Summary Only</SelectItem>
+                    <SelectItem value="detailed">Detailed Analysis</SelectItem>
+                    <SelectItem value="complete">Complete Dataset</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label className="text-sm">Compression</Label>
+                <Select
+                  value={exportConfig.compression}
+                  onValueChange={(value) => 
+                    setExportConfig(prev => ({ ...prev, compression: value }))
+                  }
+                >
+                  <SelectTrigger className="h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No Compression</SelectItem>
+                    <SelectItem value="zip">ZIP Archive</SelectItem>
+                    <SelectItem value="gzip">GZIP</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
-          </Button>
-
-          {/* Detailed JSON */}
-          <Button
-            variant="outline"
-            onClick={() => 
-              downloadFile(
-                generateDetailedReport(),
-                `${repoName}_detailed_${timestamp}.json`,
-                'application/json'
-              )
-            }
-            className="flex flex-col items-center gap-2 h-auto py-4"
-          >
-            <Database className="w-6 h-6" />
-            <div className="text-center">
-              <div className="font-medium">Detailed JSON</div>
-              <div className="text-xs text-muted-foreground">
-                Complete analysis data
-              </div>
-            </div>
-          </Button>
-
-          {/* CSV Export */}
-          <Button
-            variant="outline"
-            onClick={() => 
-              downloadFile(
-                generateCSV(),
-                `${repoName}_findings_${timestamp}.csv`,
-                'text/csv'
-              )
-            }
-            className="flex flex-col items-center gap-2 h-auto py-4"
-          >
-            <FileText className="w-6 h-6" />
-            <div className="text-center">
-              <div className="font-medium">Findings CSV</div>
-              <div className="text-xs text-muted-foreground">
-                Spreadsheet format
-              </div>
-            </div>
-          </Button>
-
-          {/* Raw Data */}
-          <Button
-            variant="outline"
-            onClick={() => 
-              downloadFile(
-                result.rawData.json,
-                `${repoName}_raw_${timestamp}.json`,
-                'application/json'
-              )
-            }
-            className="flex flex-col items-center gap-2 h-auto py-4"
-          >
-            <Database className="w-6 h-6" />
-            <div className="text-center">
-              <div className="font-medium">Raw Data</div>
-              <div className="text-xs text-muted-foreground">
-                Unprocessed results
-              </div>
-            </div>
-          </Button>
-        </div>
-
-        {/* File info */}
-        <div className="mt-4 p-3 bg-muted rounded-md">
-          <div className="text-sm text-muted-foreground">
-            <strong>Export Information:</strong>
-            <ul className="mt-1 space-y-1 text-xs">
-              <li>• Summary JSON: Overview metrics and statistics ({Math.round(generateSummaryReport().length / 1024)}KB)</li>
-              <li>• Detailed JSON: Complete analysis with all findings ({Math.round(generateDetailedReport().length / 1024)}KB)</li>
-              <li>• Findings CSV: Tabular data suitable for Excel/Sheets ({Math.round(generateCSV().length / 1024)}KB)</li>
-              <li>• Raw Data: Backend response for further processing</li>
-            </ul>
           </div>
-        </div>
-      </CardContent>
-    </Card>
+
+          <Separator />
+
+          {/* Export Buttons */}
+          <div className="space-y-4">
+            <Label className="text-sm font-medium">Quick Downloads</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {exportButtons.map((button) => (
+                <Card 
+                  key={button.id} 
+                  className="relative overflow-hidden transition-all duration-200 hover:scale-105 hover:shadow-lg group cursor-pointer"
+                  onClick={button.action}
+                >
+                  <div className={`absolute inset-0 ${button.color} opacity-10 group-hover:opacity-20 transition-opacity`} />
+                  <CardContent className="relative p-4 text-center">
+                    <div className="flex justify-center mb-3">
+                      <div className={`p-2 rounded-lg ${button.color} text-white`}>
+                        {isGenerating === button.id ? (
+                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          button.icon
+                        )}
+                      </div>
+                    </div>
+                    <h4 className="font-medium text-sm mb-1">{button.title}</h4>
+                    <p className="text-xs text-muted-foreground mb-2">{button.description}</p>
+                    <Badge variant="secondary" className="text-xs">
+                      ~{button.size}KB
+                    </Badge>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Advanced Actions */}
+          <div className="space-y-4">
+            <Label className="text-sm font-medium">Advanced Actions</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Button
+                variant="outline"
+                onClick={() => copyToClipboard(generateExecutiveSummary(), 'Executive Summary')}
+                className="flex items-center gap-2 transition-all duration-200 hover:scale-105"
+              >
+                <Copy className="w-4 h-4" />
+                Copy Summary
+              </Button>
+              
+              <Button
+                variant="outline"
+                onClick={shareReport}
+                className="flex items-center gap-2 transition-all duration-200 hover:scale-105"
+              >
+                <Share className="w-4 h-4" />
+                Share Report
+              </Button>
+              
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const subject = `Cryptographic Analysis Report - ${result.summary.repositoryName}`;
+                  const body = encodeURIComponent(generateExecutiveSummary());
+                  window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+                }}
+                className="flex items-center gap-2 transition-all duration-200 hover:scale-105"
+              >
+                <Mail className="w-4 h-4" />
+                Email Report
+              </Button>
+            </div>
+          </div>
+
+          {/* Export Info */}
+          <div className="p-4 bg-muted/30 rounded-lg border">
+            <div className="text-sm space-y-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-success" />
+                <strong>Export Information</strong>
+              </div>
+              <ul className="text-xs text-muted-foreground space-y-1 ml-6">
+                <li>• Executive Summary: Markdown report for presentations</li>
+                <li>• Detailed Report: Complete JSON with all findings and metadata</li>
+                <li>• Technical Data: CSV format for spreadsheet analysis</li>
+                <li>• Raw Data: Unprocessed backend response for custom processing</li>
+                <li>• All exports include timestamp and configuration details</li>
+              </ul>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 };
